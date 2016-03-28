@@ -26,7 +26,7 @@ INSPECTION_PARAMS = {
 
 def get_inspection_requests(**kwargs):
     params = INSPECTION_PARAMS
-    for k, a in kwargs.items():
+    for k, a in kwargs.items():  # don't throw in params that don't belong
         if k in INSPECTION_PARAMS:
             params[k] = a
     response = requests.get('{}{}'.format(INSPECTION_DOMAIN, INSPECTION_PATH,),
