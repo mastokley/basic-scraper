@@ -33,7 +33,7 @@ def get_inspection_requests(**kwargs):
                             params)
     bytes_content = sys.getsizeof(response)
     encoding = response.encoding
-    response.raise_for_status()
+    response.raise_for_status()  # not sure what this does
     return response, bytes_content, encoding
 
 # Write a load_inspection_page function which reads this file from disk and returns the content and encoding in the same way as the above function. Then you can switch between the two without altering the API. I’ll leave this exercise entirely to you.
