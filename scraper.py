@@ -177,4 +177,9 @@ def get_geojson(result):
 
 if __name__ == '__main__':
     test = len(sys.argv) > 1 and sys.argv[1] == 'test'
-    [pprint(get_geojson(r)) for r in generate_results(test)]
+    features = [get_geojson(r) for r in generate_results(test)]
+    for feature in features:
+        pprint(feature)
+    total_result = {'type': 'FeatureCollection', 'features': features}
+    with open('my_map.json', 'w') as f:
+        json.dump(total_result, f)
