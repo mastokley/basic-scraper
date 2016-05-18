@@ -3,6 +3,9 @@ from bs4 import BeautifulSoup
 import sys
 import io
 import re
+import json
+from pprint import pprint
+import geocoder
 
 INSPECTION_DOMAIN = 'http://info.kingcounty.gov'
 INSPECTION_PATH = '/health/ehs/foodsafety/inspections/Results.aspx'
@@ -25,6 +28,7 @@ INSPECTION_PARAMS = {
     'Sort': 'B',
 }
 INSPECTION_PAGE = 'inspection_page.html'
+GEOCODE_API_URL = 'http://maps.googleapis.com/maps/api/geocode/json'
 
 
 def get_inspection_page(**kwargs):
@@ -72,10 +76,10 @@ def has_two_tds(element):
 
 
 def clean_data(data):
-    data = data.string
     try:
-        return data.strip(' \n:-')
-    except AttributeError:
+        cleaned_data = re.sub(r'^\s*|\s*$|:|\- ', '', data.string)
+        return cleaned_data
+    except (AttributeError, TypeError):
         return ''
 
 
@@ -128,19 +132,54 @@ def extract_score_data(element):
     return data
 
 
-if __name__ == '__main__':
+def generate_results(test=False, count=10):
     kwargs = {
         'Inspection_Start': '2/1/2013',
         'Inspection_End': '2/1/2015',
         'Zip_Code': '98109'
     }
-    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+    if test:
         source, encoding = load_inspection_page()
     else:
         source, encoding = get_inspection_page(**kwargs)
     doc = parse_source(source, encoding)
     listings = extract_data_listings(doc)
-    for listing in listings:
+    for listing in listings[:count]:
         metadata = extract_restaurant_metadata(listing)
         score_data = extract_score_data(listing)
-        print({'metadata': metadata, 'score': score_data})
+        metadata.update(score_data)
+        yield metadata
+
+
+def get_geojson(result):
+    """Get geocoding data from google using address of the restaurant."""
+    try:
+        address = ' '.join(result['Address'])
+    except KeyError:
+        return None
+    geocoded = geocoder.google(address)
+    geojson = geocoded.geojson
+    keys = ('Business Name',
+            'Average Score',
+            'Total Inspections',
+            'High Score',
+            'Address')
+    inspection_data = {k: result.get(k, '') for k in keys}
+    for key, value in inspection_data.items():
+        if isinstance(value, list):
+            inspection_data[key] = ' '.join(value)
+    new_address = geojson['properties'].get('address')
+    if new_address:
+        inspection_data['Address'] = new_address
+    geojson['properties'] = inspection_data
+    return geojson
+
+
+if __name__ == '__main__':
+    test = len(sys.argv) > 1 and sys.argv[1] == 'test'
+    features = [get_geojson(r) for r in generate_results(test)]
+    for feature in features:
+        pprint(feature)
+    total_result = {'type': 'FeatureCollection', 'features': features}
+    with open('my_map.json', 'w') as f:
+        json.dump(total_result, f)
