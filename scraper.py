@@ -1,6 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
 import sys
+import io
+import re
 
 INSPECTION_DOMAIN = 'http://info.kingcounty.gov'
 INSPECTION_PATH = '/health/ehs/foodsafety/inspections/Results.aspx'
@@ -22,30 +24,123 @@ INSPECTION_PARAMS = {
     'Fuzzy_Search': 'N',
     'Sort': 'B',
 }
+INSPECTION_PAGE = 'inspection_page.html'
 
 
-def get_inspection_requests(**kwargs):
+def get_inspection_page(**kwargs):
+    """Return inspection page."""
     params = INSPECTION_PARAMS
-    for k, a in kwargs.items():
+    for k, a in kwargs.items():  # don't throw in params that don't belong
         if k in INSPECTION_PARAMS:
             params[k] = a
     response = requests.get('{}{}'.format(INSPECTION_DOMAIN, INSPECTION_PATH,),
                             params)
-    bytes_content = sys.getsizeof(response)
     encoding = response.encoding
     response.raise_for_status()
-    return response, bytes_content, encoding
+    return response.content, encoding
 
-# Write a load_inspection_page function which reads this file from disk and returns the content and encoding in the same way as the above function. Then you can switch between the two without altering the API. I’ll leave this exercise entirely to you.
+
+def write_inspection_page():
+    """Write inspection page to file."""
+    content = get_inspection_page()[0]
+    with io.open(INSPECTION_PAGE, 'wb') as f:
+        f.write(content)
+
 
 def load_inspection_page():
-    with io.open(filepath) as f:
-        inspection_page = f.read
+    """Load inspection page."""
+    with io.open(INSPECTION_PAGE) as f:
+        inspection_page = f.read()
+    return inspection_page, 'utf-8'
 
 
-# with io.open('kc_health_data.html') as f:
-#                html_doc = f.read()
-#
-# soup = BeautifulSoup(html_doc, 'html.parser')
-#
-# print(soup)
+def parse_source(html, encoding='utf-8'):
+    """Return soup object for given html file."""
+    return BeautifulSoup(html, 'html.parser', from_encoding=encoding)
+
+
+def extract_data_listings(html):
+    pattern = re.compile(r'PR[\d]+~')
+    return html.find_all('div', id=pattern)
+
+
+def has_two_tds(element):
+    is_row = element.name == 'tr'
+    children = element.find_all('td', recursive=False)
+    has_two_children = len(children) == 2
+    return is_row and has_two_children
+
+
+def clean_data(data):
+    data = data.string
+    try:
+        return data.strip(' \n:-')
+    except AttributeError:
+        return ''
+
+
+def extract_restaurant_metadata(element):
+    metadata_rows = element.find('table').find_all(has_two_tds,
+                                                   recursive=False)
+    rdata = {}
+    current_label = ''
+    for row in metadata_rows:
+        key_cell, value_cell = row.find_all('td', recursive=False)
+        new_label = clean_data(key_cell)
+        if new_label:
+            current_label = new_label
+        rdata.setdefault(current_label, []).append(clean_data(value_cell))
+    return rdata
+
+
+def is_inspection_row(element):
+    is_row = element.name == 'tr'
+    if not is_row:
+        return False
+    cells = element.find_all('td', recursive=False)
+    has_four = len(cells) == 4
+    this_text = clean_data(cells[0]).lower()
+    contains_word = 'inspection' in this_text
+    does_not_start = not this_text.startswith('inspection')
+    return is_row and has_four and contains_word and does_not_start
+
+
+def extract_score_data(element):
+    inspection_rows = element.find_all(is_inspection_row)
+    samples = len(inspection_rows)
+    total = high_score = average = 0
+    for row in inspection_rows:
+        string_value = clean_data(row.find_all('td')[2])
+        try:
+            int_value = int(string_value)
+        except (ValueError, TypeError):
+            samples -= 1
+        else:
+            total += int_value
+            high_score = int_value if int_value > high_score else high_score
+    if samples:
+        average = total/float(samples)
+    data = {
+        u'Average Score': average,
+        u'High Score': high_score,
+        u'Total Inspections': samples
+    }
+    return data
+
+
+if __name__ == '__main__':
+    kwargs = {
+        'Inspection_Start': '2/1/2013',
+        'Inspection_End': '2/1/2015',
+        'Zip_Code': '98109'
+    }
+    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+        source, encoding = load_inspection_page()
+    else:
+        source, encoding = get_inspection_page(**kwargs)
+    doc = parse_source(source, encoding)
+    listings = extract_data_listings(doc)
+    for listing in listings:
+        metadata = extract_restaurant_metadata(listing)
+        score_data = extract_score_data(listing)
+        print({'metadata': metadata, 'score': score_data})
